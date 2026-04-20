@@ -1,0 +1,54 @@
+import boto3
+from datetime import datetime, timezone, timedelta
+
+ec2 = boto3.client('ec2')
+scheduler = boto3.client('scheduler')
+
+SCHEDULER_ROLE_ARN = 'arn:aws:iam::ACCOUNT:role/your-scheduler-invoke-role'
+REGION = 'us-east-1'
+ACCOUNT = '123456789012'
+
+REINDEX_LAMBDA_MAP = {
+    'dev':    'DevDb_Refresh_Indexing',
+    'hotfix': 'HotfixDb_Refresh_Indexing',
+    'qa':     'QADB_Refresh_Indexing',
+    'demo':   'DemoDb_Refresh_Indexing',
+}
+
+def lambda_handler(event, context):
+    instance_id = event['detail']['instance-id']
+
+    # Fetch instance tags
+    response = ec2.describe_instances(InstanceIds=[instance_id])
+    tags = response['Reservations'][0]['Instances'][0].get('Tags', [])
+    tag_map = {t['Key']: t['Value'] for t in tags}
+
+    # Must have service:tomcat
+    if tag_map.get('service') != 'tomcat':
+        print(f'{instance_id} is not a Tomcat instance, skipping.')
+        return
+
+    env = tag_map.get('environment', '').lower()
+    reindex_fn = REINDEX_LAMBDA_MAP.get(env)
+
+    if not reindex_fn:
+        print(f'{instance_id} has unknown environment "{env}", skipping.')
+        return
+
+    # Schedule reindex 5 min from now
+    run_at = datetime.now(timezone.utc) + timedelta(minutes=5)
+    schedule_time = run_at.strftime('%Y-%m-%dT%H:%M:%S')
+    reindex_arn = f'arn:aws:lambda:{REGION}:{ACCOUNT}:function:{reindex_fn}'
+
+    scheduler.create_schedule(
+        Name=f'reindex-{env}-{instance_id}',
+        ScheduleExpression=f'at({schedule_time})',
+        FlexibleTimeWindow={'Mode': 'OFF'},
+        Target={
+            'Arn': reindex_arn,
+            'RoleArn': SCHEDULER_ROLE_ARN,
+            'Input': f'{{"instance_id": "{instance_id}", "env": "{env}"}}'
+        },
+        ActionAfterCompletion='DELETE'
+    )
+    print(f'Scheduled {reindex_fn} for {instance_id} ({env}) at {schedule_time}')
