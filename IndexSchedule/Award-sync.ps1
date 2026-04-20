@@ -2,7 +2,7 @@
 
 # ---- SET THESE 3 ----
 $Bucket   = "nextgen-prod2-data"
-$InFile   = "C:\Temp\26Q2AWARDS.txt"   # tab-delimited or comma-delimited file with headers: GWAC, eGOS ID, AWARDEE
+$InFile   = "C:\Temp\26Q2AWARDS.txt"   # tab-delimited file with headers: eGOS ID, GWAC
 $DestRoot = "C:\Users\smithr6\OneDrive - National Institutes of Health\ShareDir\26Q2Awards"
 # ---------------------
 
@@ -20,21 +20,24 @@ try {
   $rows = Import-Csv -LiteralPath $InFile
 }
 
-# --- Build map: GWAC + numeric folder extracted from eGOS ID ---
+# --- Build map: GWAC + eGOS ID ---
 $map = @()
 foreach ($r in $rows) {
   $gwac = ("$($r.GWAC)").Trim()
-
-  # header has a space; must be quoted exactly
   $egos = ("$($r.'eGOS ID')").Trim()
 
   if (-not $gwac -or -not $egos) { continue }
 
-  # Extract 6-digit number from strings like "CS-120460-SB"
-  $m = [regex]::Match($egos, '\d{6}')
-  if (-not $m.Success) { continue }
+  # Accept plain numeric IDs (e.g. 121782) OR extract digits from formatted strings (e.g. CS-120460-SB)
+  $m = [regex]::Match($egos, '^\d+$')
+  if ($m.Success) {
+    $id = $egos
+  } else {
+    $m = [regex]::Match($egos, '\d{6}')
+    if (-not $m.Success) { continue }
+    $id = $m.Value
+  }
 
-  $id = $m.Value
   $map += [PSCustomObject]@{ GWAC = $gwac; FolderID = $id }
 }
 
@@ -63,7 +66,7 @@ foreach ($row in $map) {
   if (!(Test-Path -LiteralPath $destGwac)) { New-Item -Path $destGwac -ItemType Directory -Force | Out-Null }
   if (!(Test-Path -LiteralPath $dest))     { New-Item -Path $dest     -ItemType Directory -Force | Out-Null }
 
-  # --- Reliable non-empty check (FIXED) ---
+  # --- Reliable non-empty check ---
   $countText = & aws s3api list-objects-v2 `
     --bucket $Bucket `
     --prefix $s3Prefix `
