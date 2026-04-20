@@ -4,3 +4,5 @@
 c92111f66 Add CI/CD pipeline files and clean up settings
 84d4407fe remove acquia_connector, acquia_search
 [root@ip-10-240-146-214 nitaac-clean]#
+
+git show 84d4407fe:config/default/search_api.server.local.yml | grep -E "host:|core:|id:|name:"
